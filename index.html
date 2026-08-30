@@ -46,7 +46,7 @@
         #gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
         
         #minimap-overlay { position: absolute; top: 15px; right: 15px; width: 140px; height: 140px; background: rgba(18, 18, 18, 0.85); border: 2px solid #444; border-radius: 6px; z-index: 50; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-        #minimapCanvas { width: 100%; height: 100%; display: block; cursor: pointer; }
+        #minimapCanvas { width: 100%; height: 100%; display: block; cursor: pointer; touch-action: none; }
 
         #palette-wrapper { position: relative; background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; padding-bottom: env(safe-area-inset-bottom); }
         #palette-wrapper.hidden #palette-bar { display: none; }
@@ -772,8 +772,8 @@
 
             const vX = -viewTransform.x / viewTransform.zoom;
             const vY = -viewTransform.y / viewTransform.zoom;
-            const vW = canvas.width / viewTransform.zoom;
-            const vH = canvas.height / viewTransform.zoom;
+            const vW = (canvas.width / (window.devicePixelRatio || 1)) / viewTransform.zoom;
+            const vH = (canvas.height / (window.devicePixelRatio || 1)) / viewTransform.zoom;
 
             mCtx.strokeStyle = '#00adb5';
             mCtx.lineWidth = 1.5;
@@ -855,8 +855,11 @@
             const targetGX = mx / ratio;
             const targetGY = my / ratio;
 
-            viewTransform.x = (canvas.width / 2) - targetGX * viewTransform.zoom;
-            viewTransform.y = (canvas.height / 2) - targetGY * viewTransform.zoom;
+            const logicalW = canvas.width / (window.devicePixelRatio || 1);
+            const logicalH = canvas.height / (window.devicePixelRatio || 1);
+
+            viewTransform.x = (logicalW / 2) - targetGX * viewTransform.zoom;
+            viewTransform.y = (logicalH / 2) - targetGY * viewTransform.zoom;
             draw();
         });
 
@@ -917,17 +920,18 @@
                 const p = Array.from(activePointers.values());
                 const currentDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
                 const factor = currentDist / initialPinchDist;
-                const nextZoom = Math.min(Math.max(initialZoom * factor, 1), 50);
+                const targetZoom = Math.min(Math.max(initialZoom * factor, 1), 50);
 
                 const midX = (p[0].x + p[1].x) / 2;
                 const midY = (p[0].y + p[1].y) / 2;
                 const rect = canvas.getBoundingClientRect();
+
                 const worldX = (midX - rect.left - viewTransform.x) / viewTransform.zoom;
                 const worldY = (midY - rect.top - viewTransform.y) / viewTransform.zoom;
 
-                viewTransform.zoom = nextZoom;
-                viewTransform.x = (midX - rect.left) - worldX * viewTransform.zoom;
-                viewTransform.y = (midY - rect.top) - worldY * viewTransform.zoom;
+                viewTransform.x = (midX - rect.left) - worldX * targetZoom;
+                viewTransform.y = (midY - rect.top) - worldY * targetZoom;
+                viewTransform.zoom = targetZoom;
                 draw();
                 return;
             }
@@ -1066,15 +1070,19 @@
         }
 
         function resetViewport() {
-            viewTransform.zoom = (Math.min(canvas.width, canvas.height) / GRID_SIZE) * 0.8;
-            viewTransform.x = (canvas.width - GRID_SIZE * viewTransform.zoom) / 2;
-            viewTransform.y = (canvas.height - GRID_SIZE * viewTransform.zoom) / 2;
+            const logicalW = canvas.width / (window.devicePixelRatio || 1);
+            const logicalH = canvas.height / (window.devicePixelRatio || 1);
+            viewTransform.zoom = (Math.min(logicalW, logicalH) / GRID_SIZE) * 0.8;
+            viewTransform.x = (logicalW - GRID_SIZE * viewTransform.zoom) / 2;
+            viewTransform.y = (logicalH - GRID_SIZE * viewTransform.zoom) / 2;
         }
 
         function resizeCanvas() {
             const container = document.getElementById('main-layout');
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = container.clientWidth * dpr;
+            canvas.height = container.clientHeight * dpr;
+            ctx.scale(dpr, dpr);
         }
 
         function generatePaletteUI() {
