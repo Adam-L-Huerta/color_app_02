@@ -32,14 +32,16 @@
 
         #header { height: 50px; background: var(--ui); display: flex; align-items: center; padding: 0 15px; padding-top: env(safe-area-inset-top); justify-content: space-between; border-bottom: 1px solid #333; }
         .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; }
+        .btn-hint { background: #f1c40f; color: #121212; }
         .btn-mode { background: #333; border: 1px solid #555; }
-        .btn-mode.active { background: #e74c3c; border-color: #e74c3c; }
+        .btn-mode.active { background: #e74c3c; border-color: #e74c3c; color: #fff; }
 
         #main-layout { flex: 1; position: relative; background: #151515; overflow: hidden; }
         #gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
         
-        #palette-wrapper { background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; padding-bottom: env(safe-area-inset-bottom); }
-        #palette-wrapper.hidden { display: none; }
+        #palette-wrapper { position: relative; background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; padding-bottom: env(safe-area-inset-bottom); }
+        #palette-wrapper.hidden #palette-bar { display: none; }
+        #palette-tab { position: absolute; top: -28px; right: 20px; background: var(--ui); border: 1px solid #333; border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 14px; font-size: 11px; font-weight: bold; color: var(--accent); cursor: pointer; z-index: 10; letter-spacing: 0.5px; }
         #palette-bar { height: 146px; display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 5px; padding: 8px; overflow-y: auto; box-sizing: border-box; }
         .swatch { height: 40px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: #000; border: 2px solid transparent; }
         .swatch.selected { border-color: #fff; transform: scale(1.05); }
@@ -106,9 +108,8 @@
                 <span id="level-title" style="margin-left:10px; font-weight:bold;">Mandala #1</span>
             </div>
             <div style="display:flex; gap:8px;">
-                <button class="btn" onclick="triggerHint()">Hint</button>
+                <button class="btn btn-hint" onclick="triggerHint()">Hint</button>
                 <button class="btn" onclick="toggleFullscreen()">Full Screen</button>
-                <button class="btn" id="palette-toggle-btn" onclick="togglePalette()">Hide Palette</button>
                 <button class="btn btn-mode" id="mode-toggle" onclick="toggleInteractionMode()">Mode: PAINT</button>
                 <button class="btn" onclick="moveLevel(-1)">Prev</button>
                 <button class="btn" onclick="moveLevel(1)">Next</button>
@@ -118,6 +119,7 @@
             <canvas id="gameCanvas"></canvas>
         </div>
         <div id="palette-wrapper">
+            <div id="palette-tab" onclick="togglePalette()">HIDE PALETTE</div>
             <div id="palette-bar"></div>
         </div>
     </div>
@@ -161,6 +163,9 @@
         let lastPointerPos = { x: 0, y: 0 };
         let saveTimeout = null;
 
+        let hintMarker = null;
+        let hintAnimFrame = null;
+
         function updateGridDimensions(val) {
             GRID_SIZE = parseInt(val, 10);
             answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
@@ -185,9 +190,9 @@
 
         function togglePalette() {
             const wrapper = document.getElementById('palette-wrapper');
-            const btn = document.getElementById('palette-toggle-btn');
+            const tab = document.getElementById('palette-tab');
             const isHidden = wrapper.classList.toggle('hidden');
-            if (btn) btn.textContent = isHidden ? 'Show Palette' : 'Hide Palette';
+            if (tab) tab.textContent = isHidden ? 'SHOW PALETTE' : 'HIDE PALETTE';
             resizeCanvas();
             draw();
         }
@@ -232,7 +237,28 @@
             viewTransform.zoom = 12;
             viewTransform.x = (canvas.width / 2) - (gx + 0.5) * viewTransform.zoom;
             viewTransform.y = (canvas.height / 2) - (gy + 0.5) * viewTransform.zoom;
+
+            hintMarker = {
+                x: gx + 0.5,
+                y: gy + 0.5,
+                startTime: performance.now(),
+                duration: 1800
+            };
+
+            if (hintAnimFrame) cancelAnimationFrame(hintAnimFrame);
+            animateHint();
+        }
+
+        function animateHint() {
+            if (!hintMarker) return;
+            const elapsed = performance.now() - hintMarker.startTime;
+            if (elapsed > hintMarker.duration) {
+                hintMarker = null;
+                draw();
+                return;
+            }
             draw();
+            hintAnimFrame = requestAnimationFrame(animateHint);
         }
 
         function setupRealtimeSubscription() {
@@ -335,6 +361,7 @@
 
         async function initLevel(levelIndex, overrideUrl = null) {
             isLevelLoaded = false;
+            hintMarker = null;
             currentLevel = levelIndex;
             document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1} (${GRID_SIZE}x${GRID_SIZE})`;
             
@@ -530,6 +557,35 @@
                     }
                 }
             }
+
+            if (hintMarker) {
+                const elapsed = performance.now() - hintMarker.startTime;
+                const progress = elapsed / hintMarker.duration;
+                const radius = 0.5 + (progress * 3.5);
+                const alpha = Math.max(0, 1 - progress);
+
+                ctx.save();
+                
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(231, 76, 60, ${alpha})`;
+                ctx.lineWidth = 3 / z;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, radius * 0.5, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(241, 196, 15, ${alpha * 0.7})`;
+                ctx.lineWidth = 2 / z;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, 0.25, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(231, 76, 60, ${alpha})`;
+                ctx.fill();
+
+                ctx.restore();
+            }
+
             ctx.restore();
         }
 
@@ -821,6 +877,7 @@
         async function returnToGallery() {
             await saveState(true);
             isLevelLoaded = false;
+            hintMarker = null;
             customImageUrl = "";
             document.getElementById('game-screen').classList.remove('active');
             document.getElementById('home-screen').classList.add('active');
@@ -830,6 +887,7 @@
         async function moveLevel(dir) {
             await saveState(true);
             isLevelLoaded = false;
+            hintMarker = null;
             customImageUrl = "";
             const next = currentLevel + dir;
             if (next >= 0 && next < TOTAL_LEVELS) await initLevel(next);
