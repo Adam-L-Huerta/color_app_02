@@ -21,6 +21,8 @@
         .tab-btn { background: #25252b; color: #888; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; border-radius: 4px; }
         .tab-btn.active { background: var(--accent); color: #fff; }
 
+        .select-btn { background: #222; color: var(--text); border: 1px solid #444; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+
         .url-input-container { display: none; gap: 10px; margin-bottom: 20px; }
         .url-input-container.active { display: flex; }
         .url-input-container input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 10px; border-radius: 4px; }
@@ -36,8 +38,9 @@
         #main-layout { flex: 1; position: relative; background: #151515; overflow: hidden; }
         #gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
         
-        #palette-wrapper { height: calc(140px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; }
-        #palette-bar { height: 140px; display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 5px; padding: 8px; overflow-y: auto; box-sizing: border-box; }
+        #palette-wrapper { background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; padding-bottom: env(safe-area-inset-bottom); }
+        #palette-wrapper.hidden { display: none; }
+        #palette-bar { height: 146px; display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 5px; padding: 8px; overflow-y: auto; box-sizing: border-box; }
         .swatch { height: 40px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: #000; border: 2px solid transparent; }
         .swatch.selected { border-color: #fff; transform: scale(1.05); }
     </style>
@@ -58,14 +61,27 @@
     <div id="home-screen" class="screen active">
         <div class="controls-row">
             <div class="tab-container" id="category-tabs"></div>
-            <div style="display:flex; gap:10px; align-items:center;">
-                <select id="theme-select" class="btn" style="background:#222; border:1px solid #444;" onchange="changeTheme(this.value)">
-                    <option value="all">Filter Theme: All</option>
-                    <option value="warm">Filter Theme: Warm</option>
-                    <option value="cool">Filter Theme: Cool</option>
-                    <option value="pastel">Filter Theme: Pastel</option>
-                    <option value="neon">Filter Theme: Neon</option>
-                    <option value="grayscale">Filter Theme: Grayscale</option>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <select id="size-select" class="select-btn" onchange="updateGridDimensions(this.value)">
+                    <option value="150">Grid: 150x150</option>
+                    <option value="200">Grid: 200x200</option>
+                    <option value="250">Grid: 250x250</option>
+                    <option value="300">Grid: 300x300</option>
+                </select>
+                <select id="subject-select" class="select-btn" onchange="renderPortfolioGallery()">
+                    <option value="general">Subject: General</option>
+                    <option value="landscape">Subject: Landscape</option>
+                    <option value="animals">Subject: Animals</option>
+                    <option value="architecture">Subject: Architecture</option>
+                    <option value="abstract">Subject: Abstract</option>
+                </select>
+                <select id="theme-select" class="select-btn" onchange="changeTheme(this.value)">
+                    <option value="all">Palette: All</option>
+                    <option value="warm">Palette: Warm</option>
+                    <option value="cool">Palette: Cool</option>
+                    <option value="pastel">Palette: Pastel</option>
+                    <option value="neon">Palette: Neon</option>
+                    <option value="grayscale">Palette: Grayscale</option>
                 </select>
                 <span id="user-status" style="font-size:12px; color:#888">Offline Mode</span>
                 <button class="btn" style="background:#444" onclick="logout()">Sign Out</button>
@@ -73,7 +89,7 @@
         </div>
 
         <div id="custom-url-container" class="url-input-container">
-            <input type="text" id="custom-image-url" placeholder="Paste image URL (CORS enabled)...">
+            <input type="text" id="custom-image-url" placeholder="Paste image URL for current level...">
             <button class="btn" onclick="loadCustomUrlFromInput()">Load Photo</button>
         </div>
 
@@ -90,6 +106,9 @@
                 <span id="level-title" style="margin-left:10px; font-weight:bold;">Mandala #1</span>
             </div>
             <div style="display:flex; gap:8px;">
+                <button class="btn" onclick="triggerHint()">Hint</button>
+                <button class="btn" onclick="toggleFullscreen()">Full Screen</button>
+                <button class="btn" id="palette-toggle-btn" onclick="togglePalette()">Hide Palette</button>
                 <button class="btn btn-mode" id="mode-toggle" onclick="toggleInteractionMode()">Mode: PAINT</button>
                 <button class="btn" onclick="moveLevel(-1)">Prev</button>
                 <button class="btn" onclick="moveLevel(1)">Next</button>
@@ -111,7 +130,7 @@
             ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) 
             : null;
 
-        const GRID_SIZE = 150;
+        let GRID_SIZE = 150;
         const TOTAL_LEVELS = 10000;
         const TARGET_COLORS_COUNT = 160;
 
@@ -142,9 +161,16 @@
         let lastPointerPos = { x: 0, y: 0 };
         let saveTimeout = null;
 
+        function updateGridDimensions(val) {
+            GRID_SIZE = parseInt(val, 10);
+            answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            renderPortfolioGallery();
+        }
+
         function getStorageKey(category, levelIndex) {
             const userId = currentUser ? currentUser.id : 'guest';
-            return `grid_save_${userId}_${category}_${levelIndex}`;
+            return `grid_save_${userId}_${category}_${levelIndex}_${GRID_SIZE}`;
         }
 
         function getLevelTheme(levelIdx) {
@@ -155,6 +181,58 @@
         function changeTheme(themeKey) {
             activeTheme = themeKey;
             renderPortfolioGallery();
+        }
+
+        function togglePalette() {
+            const wrapper = document.getElementById('palette-wrapper');
+            const btn = document.getElementById('palette-toggle-btn');
+            const isHidden = wrapper.classList.toggle('hidden');
+            if (btn) btn.textContent = isHidden ? 'Show Palette' : 'Hide Palette';
+            resizeCanvas();
+            draw();
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+
+        function triggerHint() {
+            if (!isLevelLoaded) return;
+            let targetIdx = -1;
+
+            for (let i = 0; i < answerGrid.length; i++) {
+                if (userGrid[i] === 0 && answerGrid[i] === activeColorId) {
+                    targetIdx = i;
+                    break;
+                }
+            }
+
+            if (targetIdx === -1) {
+                for (let i = 0; i < answerGrid.length; i++) {
+                    if (userGrid[i] === 0) {
+                        targetIdx = i;
+                        activeColorId = answerGrid[i];
+                        generatePaletteUI();
+                        break;
+                    }
+                }
+            }
+
+            if (targetIdx === -1) return;
+
+            const gx = targetIdx % GRID_SIZE;
+            const gy = Math.floor(targetIdx / GRID_SIZE);
+
+            viewTransform.zoom = 12;
+            viewTransform.x = (canvas.width / 2) - (gx + 0.5) * viewTransform.zoom;
+            viewTransform.y = (canvas.height / 2) - (gy + 0.5) * viewTransform.zoom;
+            draw();
         }
 
         function setupRealtimeSubscription() {
@@ -232,20 +310,6 @@
             renderPortfolioGallery();
         }
 
-        async function logout() {
-            if (isLevelLoaded) {
-                await saveState(true);
-            }
-            if (realtimeChannel && supabaseClient) {
-                supabaseClient.removeChannel(realtimeChannel);
-            }
-            if (supabaseClient) {
-                await supabaseClient.auth.signOut();
-            }
-            currentUser = null;
-            location.reload();
-        }
-
         function switchCategory(category) {
             currentCategory = category;
             renderCategoryTabs();
@@ -272,15 +336,19 @@
         async function initLevel(levelIndex, overrideUrl = null) {
             isLevelLoaded = false;
             currentLevel = levelIndex;
-            document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1}`;
+            document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1} (${GRID_SIZE}x${GRID_SIZE})`;
             
+            answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+
             try {
                 if (currentCategory === 'photography') {
-                    const imageId = (currentLevel % 1084);
-                    await loadPhotoFromUrl(`https://picsum.photos/id/${imageId}/150/150`);
+                    const subject = document.getElementById('subject-select').value;
+                    const seedTag = subject === 'general' ? currentLevel : `${subject}-${currentLevel}`;
+                    await loadPhotoFromUrl(`https://picsum.photos/seed/${seedTag}/${GRID_SIZE}/${GRID_SIZE}`);
                 } else if (currentCategory === 'custom') {
-                    let url = overrideUrl || customImageUrl;
                     const userId = currentUser ? currentUser.id : 'guest';
+                    let url = overrideUrl;
                     
                     if (!url && currentUser && supabaseClient) {
                         const { data } = await supabaseClient.from('user_progress')
@@ -292,12 +360,16 @@
                         if (data && data.custom_url) url = data.custom_url;
                     }
                     
-                    if (!url) url = localStorage.getItem(`custom_url_${userId}_${currentLevel}`);
+                    if (!url) {
+                        url = localStorage.getItem(`custom_url_${userId}_${currentLevel}`);
+                    }
                     
                     if (!url) {
-                        alert("Please provide a valid image URL.");
+                        alert(`No custom image URL provided for Level #${currentLevel + 1}`);
+                        returnToGallery();
                         return;
                     }
+
                     customImageUrl = url;
                     localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
                     await loadPhotoFromUrl(url);
@@ -306,6 +378,7 @@
                 }
             } catch(err) {
                 alert("Image loading failed. Ensure URL supports cross-origin sharing (CORS).");
+                returnToGallery();
                 return;
             }
 
@@ -384,9 +457,11 @@
         function loadCustomUrlFromInput() {
             const input = document.getElementById('custom-image-url');
             if (!input.value) return;
+            const targetUrl = input.value;
+            input.value = '';
             document.getElementById('home-screen').classList.remove('active');
             document.getElementById('game-screen').classList.add('active');
-            initLevel(0, input.value);
+            initLevel(currentLevel, targetUrl);
         }
 
         function generateDeterministicData(seed) {
@@ -677,7 +752,7 @@
         function createLevelCard(levelIdx, progressCount) {
             const card = document.createElement('div');
             card.className = 'level-card';
-            card.innerHTML = `<div>${currentCategory.toUpperCase()} #${levelIdx + 1}</div><div style="font-size:11px; color:#888">${progressCount} pixels</div>`;
+            card.innerHTML = `<div>${currentCategory.toUpperCase()} #${levelIdx + 1}</div><div style="font-size:11px; color:#888">${progressCount} / ${GRID_SIZE * GRID_SIZE} px</div>`;
             card.onclick = async () => {
                 document.getElementById('home-screen').classList.remove('active');
                 document.getElementById('game-screen').classList.add('active');
@@ -698,8 +773,8 @@
 
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (key && key.startsWith(prefix)) {
-                    const levelIdx = parseInt(key.slice(prefix.length), 10);
+                if (key && key.startsWith(prefix) && key.endsWith(`_${GRID_SIZE}`)) {
+                    const levelIdx = parseInt(key.replace(prefix, '').split('_')[0], 10);
                     if (!isNaN(levelIdx)) {
                         try {
                             const saved = JSON.parse(localStorage.getItem(key) || '[]');
@@ -720,7 +795,7 @@
                         const indices = row.colored_indices || [];
                         if (indices.length > 0) {
                             progressMap.set(row.level_index, indices.length);
-                            localStorage.setItem(`${prefix}${row.level_index}`, JSON.stringify(indices));
+                            localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
                         }
                     }
                 }
@@ -746,6 +821,7 @@
         async function returnToGallery() {
             await saveState(true);
             isLevelLoaded = false;
+            customImageUrl = "";
             document.getElementById('game-screen').classList.remove('active');
             document.getElementById('home-screen').classList.add('active');
             await renderPortfolioGallery();
@@ -754,8 +830,23 @@
         async function moveLevel(dir) {
             await saveState(true);
             isLevelLoaded = false;
+            customImageUrl = "";
             const next = currentLevel + dir;
             if (next >= 0 && next < TOTAL_LEVELS) await initLevel(next);
+        }
+
+        async function logout() {
+            if (isLevelLoaded) {
+                await saveState(true);
+            }
+            if (realtimeChannel && supabaseClient) {
+                supabaseClient.removeChannel(realtimeChannel);
+            }
+            if (supabaseClient) {
+                await supabaseClient.auth.signOut();
+            }
+            currentUser = null;
+            location.reload();
         }
 
         window.addEventListener('resize', () => { resizeCanvas(); draw(); });
