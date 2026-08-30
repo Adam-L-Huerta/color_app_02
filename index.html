@@ -135,7 +135,7 @@
                     <option value="grayscale">Palette: Grayscale</option>
                 </select>
                 <span id="user-status" style="font-size:12px; color:#888">Offline Mode</span>
-                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">⚙ Settings</button>
+                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">Settings</button>
                 <button class="btn" style="background:#444" onclick="logout()">Sign Out</button>
             </div>
         </div>
@@ -160,7 +160,7 @@
             <div style="display:flex; gap:8px;">
                 <button class="btn btn-hint" onclick="triggerHint()">Hint</button>
                 <button class="btn btn-timelapse" onclick="playTimelapse()">Timelapse</button>
-                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">⚙ Settings</button>
+                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">Settings</button>
                 <button class="btn" onclick="toggleFullscreen()">Full Screen</button>
                 <button class="btn btn-mode" id="mode-toggle" onclick="toggleInteractionMode()">Mode: PAINT</button>
                 <button class="btn" onclick="moveLevel(-1)">Prev</button>
@@ -300,11 +300,18 @@
             document.getElementById('settings-modal').classList.toggle('active', show);
         }
 
-        function updateGridDimensions(val) {
+        async function updateGridDimensions(val) {
+            if (isLevelLoaded) {
+                await saveState(true);
+            }
             GRID_SIZE = parseInt(val, 10);
             answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
             userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
-            renderPortfolioGallery();
+            if (isLevelLoaded) {
+                await initLevel(currentLevel);
+            } else {
+                await renderPortfolioGallery();
+            }
         }
 
         function getStorageKey(category, levelIndex) {
@@ -513,23 +520,38 @@
         }
 
         async function initAuthSession() {
-            if (!supabaseClient) return;
+            if (!supabaseClient) {
+                bypassAuth();
+                return;
+            }
             const { data: { session } } = await supabaseClient.auth.getSession();
             if (session) {
                 currentUser = session.user;
                 document.getElementById('auth-overlay').classList.remove('active');
                 document.getElementById('user-status').textContent = currentUser.email;
                 setupRealtimeSubscription();
-                await renderPortfolioGallery();
+            } else {
+                bypassAuth();
             }
+            await renderPortfolioGallery();
 
             supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+                const prevUserId = currentUser ? currentUser.id : null;
                 currentUser = session ? session.user : null;
+                const newUserId = currentUser ? currentUser.id : null;
+                
                 document.getElementById('user-status').textContent = currentUser ? currentUser.email : 'Offline Mode';
                 if (currentUser) {
                     document.getElementById('auth-overlay').classList.remove('active');
-                    setupRealtimeSubscription();
-                    await renderPortfolioGallery();
+                }
+                
+                if (prevUserId !== newUserId) {
+                    if (currentUser) setupRealtimeSubscription();
+                    if (isLevelLoaded) {
+                        await initLevel(currentLevel);
+                    } else {
+                        await renderPortfolioGallery();
+                    }
                 }
             });
         }
@@ -1050,11 +1072,30 @@
                     coloredIndices = data.colored_indices || [];
                     if (data.custom_url) customImageUrl = data.custom_url;
                     localStorage.setItem(key, JSON.stringify(coloredIndices));
-                } else {
-                    coloredIndices = JSON.parse(localStorage.getItem(key) || '[]');
                 }
-            } else {
-                coloredIndices = JSON.parse(localStorage.getItem(key) || '[]');
+            }
+
+            if (coloredIndices.length === 0) {
+                const userId = currentUser ? currentUser.id : 'guest';
+                const keyCandidates = [
+                    key,
+                    `grid_save_${userId}_${currentCategory}_${currentLevel}`,
+                    `grid_save_guest_${currentCategory}_${currentLevel}_${GRID_SIZE}`,
+                    `grid_save_guest_${currentCategory}_${currentLevel}`
+                ];
+
+                for (const candidateKey of keyCandidates) {
+                    const raw = localStorage.getItem(candidateKey);
+                    if (raw) {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            if (parsed && parsed.length > 0) {
+                                coloredIndices = parsed;
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                }
             }
 
             for (let idx of coloredIndices) {
@@ -1154,8 +1195,9 @@
 
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (key && key.startsWith(prefix) && key.endsWith(`_${GRID_SIZE}`)) {
-                    const levelIdx = parseInt(key.replace(prefix, '').split('_')[0], 10);
+                if (key && (key.startsWith(prefix) || key.startsWith(`grid_save_guest_${currentCategory}_`))) {
+                    const parts = key.split('_');
+                    const levelIdx = parseInt(parts[3], 10);
                     if (!isNaN(levelIdx)) {
                         try {
                             const saved = JSON.parse(localStorage.getItem(key) || '[]');
