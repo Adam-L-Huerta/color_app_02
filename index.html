@@ -60,12 +60,12 @@
             <div class="tab-container" id="category-tabs"></div>
             <div style="display:flex; gap:10px; align-items:center;">
                 <select id="theme-select" class="btn" style="background:#222; border:1px solid #444;" onchange="changeTheme(this.value)">
-                    <option value="all">Theme: All Colors</option>
-                    <option value="warm">Theme: Warm</option>
-                    <option value="cool">Theme: Cool</option>
-                    <option value="pastel">Theme: Pastel</option>
-                    <option value="neon">Theme: Neon</option>
-                    <option value="grayscale">Theme: Grayscale</option>
+                    <option value="all">Filter Theme: All</option>
+                    <option value="warm">Filter Theme: Warm</option>
+                    <option value="cool">Filter Theme: Cool</option>
+                    <option value="pastel">Filter Theme: Pastel</option>
+                    <option value="neon">Filter Theme: Neon</option>
+                    <option value="grayscale">Filter Theme: Grayscale</option>
                 </select>
                 <span id="user-status" style="font-size:12px; color:#888">Offline Mode</span>
                 <button class="btn" style="background:#444" onclick="logout()">Sign Out</button>
@@ -115,15 +115,6 @@
         const TOTAL_LEVELS = 10000;
         const TARGET_COLORS_COUNT = 160;
 
-        const COLOR_THEMES = {
-            all: null,
-            warm: { hMin: 0, hMax: 60, sMin: 60, sMax: 100, lMin: 40, lMax: 70 },
-            cool: { hMin: 180, hMax: 270, sMin: 50, sMax: 100, lMin: 40, lMax: 70 },
-            pastel: { hMin: 0, hMax: 360, sMin: 25, sMax: 45, lMin: 70, lMax: 90 },
-            neon: { hMin: 0, hMax: 360, sMin: 90, sMax: 100, lMin: 50, lMax: 60 },
-            grayscale: { hMin: 0, hMax: 0, sMin: 0, sMax: 0, lMin: 15, lMax: 85 }
-        };
-
         let activeTheme = 'all';
         let currentUser = null;
         let currentCategory = 'mandala';
@@ -156,6 +147,16 @@
             return `grid_save_${userId}_${category}_${levelIndex}`;
         }
 
+        function getLevelTheme(levelIdx) {
+            const themeKeys = ['warm', 'cool', 'pastel', 'neon', 'grayscale'];
+            return themeKeys[levelIdx % themeKeys.length];
+        }
+
+        function changeTheme(themeKey) {
+            activeTheme = themeKey;
+            renderPortfolioGallery();
+        }
+
         function setupRealtimeSubscription() {
             if (!supabaseClient || !currentUser) return;
             if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
@@ -180,58 +181,6 @@
                     }
                 })
                 .subscribe();
-        }
-
-        function hslToRgb(h, s, l) {
-            let r, g, b;
-            if (s === 0) {
-                r = g = b = l;
-            } else {
-                const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-                const p = 2 * l - q;
-                const hue2rgb = (p, q, t) => {
-                    if (t < 0) t += 1;
-                    if (t > 1) t -= 1;
-                    if (t < 1/6) return p + (q - p) * 6 * t;
-                    if (t < 1/2) return q;
-                    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-                    return p;
-                };
-                r = hue2rgb(p, q, h + 1/3);
-                g = hue2rgb(p, q, h);
-                b = hue2rgb(p, q, h - 1/3);
-            }
-            return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-        }
-
-        function isRgbInTheme(r, g, b, themeKey) {
-            const theme = COLOR_THEMES[themeKey];
-            if (!theme) return true;
-            
-            const rNorm = r / 255, gNorm = g / 255, bNorm = b / 255;
-            const max = Math.max(rNorm, gNorm, bNorm), min = Math.min(rNorm, gNorm, bNorm);
-            let h = 0, s = 0, l = (max + min) / 2;
-
-            if (max !== min) {
-                const d = max - min;
-                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                switch (max) {
-                    case rNorm: h = (gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0); break;
-                    case gNorm: h = (bNorm - rNorm) / d + 2; break;
-                    case bNorm: h = (rNorm - gNorm) / d + 4; break;
-                }
-                h /= 6;
-            }
-            
-            h *= 360; s *= 100; l *= 100;
-            return (h >= theme.hMin && h <= theme.hMax && s >= theme.sMin && s <= theme.sMax && l >= theme.lMin && l <= theme.lMax);
-        }
-
-        function changeTheme(themeKey) {
-            activeTheme = themeKey;
-            if (document.getElementById('game-screen').classList.contains('active')) {
-                initLevel(currentLevel);
-            }
         }
 
         async function initAuthSession() {
@@ -395,22 +344,8 @@
                 const r = Math.round(imgData[i] / 16) * 16;
                 const g = Math.round(imgData[i + 1] / 16) * 16;
                 const b = Math.round(imgData[i + 2] / 16) * 16;
-                
-                if (!isRgbInTheme(r, g, b, activeTheme)) continue;
-                
                 const key = `${r},${g},${b}`;
                 colorMap.set(key, (colorMap.get(key) || 0) + 1);
-            }
-
-            if (colorMap.size === 0) {
-                for (let i = 0; i < imgData.length; i += 4) {
-                    if (imgData[i + 3] < 128) continue;
-                    const r = Math.round(imgData[i] / 16) * 16;
-                    const g = Math.round(imgData[i + 1] / 16) * 16;
-                    const b = Math.round(imgData[i + 2] / 16) * 16;
-                    const key = `${r},${g},${b}`;
-                    colorMap.set(key, (colorMap.get(key) || 0) + 1);
-                }
             }
 
             const sortedColors = Array.from(colorMap.entries())
@@ -463,21 +398,11 @@
 
             colorPalette = ['#e0e0e0'];
             rgbPaletteParsed = [[224, 224, 224]];
-            
-            const theme = COLOR_THEMES[activeTheme];
 
             for (let i = 1; i <= TARGET_COLORS_COUNT; i++) {
-                let r, g, b;
-                if (!theme) {
-                    r = Math.floor(nextRandom() * 190) + 40;
-                    g = Math.floor(nextRandom() * 190) + 40;
-                    b = Math.floor(nextRandom() * 190) + 40;
-                } else {
-                    const h = (theme.hMin + nextRandom() * (theme.hMax - theme.hMin)) / 360;
-                    const s = (theme.sMin + nextRandom() * (theme.sMax - theme.sMin)) / 100;
-                    const l = (theme.lMin + nextRandom() * (theme.lMax - theme.lMin)) / 100;
-                    [r, g, b] = hslToRgb(h, s, l);
-                }
+                const r = Math.floor(nextRandom() * 190) + 40;
+                const g = Math.floor(nextRandom() * 190) + 40;
+                const b = Math.floor(nextRandom() * 190) + 40;
                 colorPalette.push(`rgb(${r},${g},${b})`);
                 rgbPaletteParsed.push([r, g, b]);
             }
@@ -801,15 +726,19 @@
                 }
             }
 
-            if (progressMap.size > 0) {
-                progressMap.forEach((count, levelIdx) => {
-                    const card = createLevelCard(levelIdx, count);
-                    if (count >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
-                    else inProgress.appendChild(card);
-                });
-            } else {
-                for (let i = 0; i < 12; i++) {
-                    inProgress.appendChild(createLevelCard(i, 0));
+            progressMap.forEach((count, levelIdx) => {
+                if (activeTheme !== 'all' && getLevelTheme(levelIdx) !== activeTheme) return;
+
+                const card = createLevelCard(levelIdx, count);
+                if (count >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
+                else inProgress.appendChild(card);
+            });
+
+            for (let i = 0; i < 24; i++) {
+                if (!progressMap.has(i)) {
+                    if (activeTheme === 'all' || getLevelTheme(i) === activeTheme) {
+                        inProgress.appendChild(createLevelCard(i, 0));
+                    }
                 }
             }
         }
