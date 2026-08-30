@@ -892,9 +892,8 @@ async function loadState() {
         const userId = currentUser ? currentUser.id : 'guest';
         const keyCandidates = [
             key,
-            `grid_save_${userId}_${currentCategory}_${currentLevel}`,
-            `grid_save_guest_${currentCategory}_${currentLevel}_${GRID_SIZE}`,
-            `grid_save_guest_${currentCategory}_${currentLevel}`
+            `grid_save_${userId}_${currentCategory}_${currentLevel}_${GRID_SIZE}`,
+            `grid_save_guest_${currentCategory}_${currentLevel}_${GRID_SIZE}`
         ];
 
         for (const candidateKey of keyCandidates) {
@@ -984,10 +983,72 @@ function generatePaletteUI() {
     }
 }
 
-function createLevelCard(levelIdx, progressCount) {
+function createLevelCard(levelIdx, coloredIndices = []) {
     const card = document.createElement('div');
     card.className = 'level-card';
-    card.innerHTML = `<div>${currentCategory.toUpperCase()} #${levelIdx + 1}</div><div style="font-size:11px; color:#888">${progressCount} / ${GRID_SIZE * GRID_SIZE} px</div>`;
+
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = GRID_SIZE;
+    previewCanvas.height = GRID_SIZE;
+    previewCanvas.className = 'card-preview';
+    const pCtx = previewCanvas.getContext('2d');
+
+    const totalPixels = GRID_SIZE * GRID_SIZE;
+    const progressCount = coloredIndices.length;
+
+    pCtx.fillStyle = '#cacaca';
+    pCtx.fillRect(0, 0, GRID_SIZE, GRID_SIZE);
+
+    if (progressCount > 0) {
+        const coloredSet = new Set(coloredIndices);
+
+        if (currentCategory === 'mandala') {
+            let currentSeed = (levelIdx + 1) * 123456789;
+            function nextRandom() {
+                currentSeed = (currentSeed * 1664525 + 1013904223) % 4294967296;
+                return currentSeed / 4294967296;
+            }
+
+            let tempPalette = ['#e0e0e0'];
+            for (let i = 1; i <= TARGET_COLORS_COUNT; i++) {
+                const r = Math.floor(nextRandom() * 190) + 40;
+                const g = Math.floor(nextRandom() * 190) + 40;
+                const b = Math.floor(nextRandom() * 190) + 40;
+                tempPalette.push(`rgb(${r},${g},${b})`);
+            }
+
+            const centerX = GRID_SIZE / 2;
+            const centerY = GRID_SIZE / 2;
+
+            coloredSet.forEach(idx => {
+                const x = idx % GRID_SIZE;
+                const y = Math.floor(idx / GRID_SIZE);
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const r = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx);
+                const val = (Math.sin(r * 0.8) + Math.cos(angle * 12) + 2) / 4;
+                const colorIdx = Math.floor(val * (TARGET_COLORS_COUNT - 1)) + 1;
+
+                pCtx.fillStyle = tempPalette[colorIdx] || '#ffffff';
+                pCtx.fillRect(x, y, 1, 1);
+            });
+        } else {
+            coloredSet.forEach(idx => {
+                const x = idx % GRID_SIZE;
+                const y = Math.floor(idx / GRID_SIZE);
+                pCtx.fillStyle = '#00adb5';
+                pCtx.fillRect(x, y, 1, 1);
+            });
+        }
+    }
+
+    card.innerHTML = `
+        <div style="font-weight:bold; margin-top:6px;">${currentCategory.toUpperCase()} #${levelIdx + 1}</div>
+        <div style="font-size:11px; color:#888;">${progressCount} / ${totalPixels} px</div>
+    `;
+    card.prepend(previewCanvas);
+
     card.onclick = async () => {
         document.getElementById('home-screen').classList.remove('active');
         document.getElementById('game-screen').classList.add('active');
@@ -1010,12 +1071,19 @@ async function renderPortfolioGallery() {
         const key = localStorage.key(i);
         if (key && (key.startsWith(prefix) || key.startsWith(`grid_save_guest_${currentCategory}_`))) {
             const parts = key.split('_');
-            const levelIdx = parseInt(parts[3], 10);
-            if (!isNaN(levelIdx)) {
-                try {
-                    const saved = JSON.parse(localStorage.getItem(key) || '[]');
-                    if (saved.length > 0) progressMap.set(levelIdx, saved.length);
-                } catch(e){}
+            if (parts.length >= 6) {
+                const cat = parts[3];
+                const levelIdx = parseInt(parts[4], 10);
+                const keyGridSize = parseInt(parts[5], 10);
+
+                if (cat === currentCategory && !isNaN(levelIdx) && keyGridSize === GRID_SIZE) {
+                    try {
+                        const saved = JSON.parse(localStorage.getItem(key) || '[]');
+                        if (Array.isArray(saved) && saved.length > 0) {
+                            progressMap.set(levelIdx, saved);
+                        }
+                    } catch(e){}
+                }
             }
         }
     }
@@ -1030,25 +1098,27 @@ async function renderPortfolioGallery() {
             for (const row of data) {
                 const indices = row.colored_indices || [];
                 if (indices.length > 0) {
-                    progressMap.set(row.level_index, indices.length);
+                    progressMap.set(row.level_index, indices);
                     localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
                 }
             }
         }
     }
 
-    progressMap.forEach((count, levelIdx) => {
+    const totalPixels = GRID_SIZE * GRID_SIZE;
+
+    progressMap.forEach((indices, levelIdx) => {
         if (activeTheme !== 'all' && getLevelTheme(levelIdx) !== activeTheme) return;
 
-        const card = createLevelCard(levelIdx, count);
-        if (count >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
+        const card = createLevelCard(levelIdx, indices);
+        if (indices.length >= totalPixels) completed.appendChild(card);
         else inProgress.appendChild(card);
     });
 
     for (let i = 0; i < 24; i++) {
         if (!progressMap.has(i)) {
             if (activeTheme === 'all' || getLevelTheme(i) === activeTheme) {
-                inProgress.appendChild(createLevelCard(i, 0));
+                inProgress.appendChild(createLevelCard(i, []));
             }
         }
     }
