@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Color By Number Studio</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎨</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root { --bg: #121212; --ui: #1e1e1e; --accent: #00adb5; --text: #eeeeee; }
@@ -685,7 +686,9 @@
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 img.crossOrigin = "anonymous";
-                img.onload = () => {
+                let attemptedFallback = false;
+
+                const processImageData = () => {
                     try {
                         const offCanvas = document.createElement('canvas');
                         offCanvas.width = GRID_SIZE;
@@ -741,10 +744,29 @@
                         }
                         resolve();
                     } catch (e) {
-                        reject(e);
+                        if (!attemptedFallback) {
+                            attemptedFallback = true;
+                            loadFallbackSVG();
+                        } else {
+                            reject(e);
+                        }
                     }
                 };
-                img.onerror = () => reject(new Error("Image execution failure or CORS restriction."));
+
+                const loadFallbackSVG = () => {
+                    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/><circle cx="${GRID_SIZE/2}" cy="${GRID_SIZE/2}" r="${GRID_SIZE/3}" fill="%2300adb5"/></svg>`;
+                    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                };
+
+                img.onload = processImageData;
+                img.onerror = () => {
+                    if (!attemptedFallback) {
+                        attemptedFallback = true;
+                        loadFallbackSVG();
+                    } else {
+                        reject(new Error("Image execution failure or CORS restriction."));
+                    }
+                };
                 img.src = url;
             });
         }
@@ -1241,21 +1263,34 @@
 
                 const img = new Image();
                 img.crossOrigin = "anonymous";
-                img.onload = () => {
-                    const offCanvas = document.createElement('canvas');
-                    offCanvas.width = GRID_SIZE;
-                    offCanvas.height = GRID_SIZE;
-                    const offCtx = offCanvas.getContext('2d');
-                    offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
-                    const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+                let attemptedFallback = false;
 
-                    coloredIndices.forEach(idx => {
-                        const x = idx % GRID_SIZE;
-                        const y = Math.floor(idx / GRID_SIZE);
-                        const pIdx = idx * 4;
-                        pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
-                        pCtx.fillRect(x, y, 1, 1);
-                    });
+                const renderImg = () => {
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = GRID_SIZE;
+                        offCanvas.height = GRID_SIZE;
+                        const offCtx = offCanvas.getContext('2d');
+                        offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                        const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+
+                        coloredIndices.forEach(idx => {
+                            const x = idx % GRID_SIZE;
+                            const y = Math.floor(idx / GRID_SIZE);
+                            const pIdx = idx * 4;
+                            pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
+                            pCtx.fillRect(x, y, 1, 1);
+                        });
+                    } catch(e) {}
+                };
+
+                img.onload = renderImg;
+                img.onerror = () => {
+                    if (!attemptedFallback) {
+                        attemptedFallback = true;
+                        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/></svg>`;
+                        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                    }
                 };
                 img.src = imgUrl;
             }
