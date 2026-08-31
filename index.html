@@ -190,7 +190,9 @@
         const SUPABASE_ANON_KEY = "sb_publishable_DOqW6Lf_dk5E19SUwIRkiA_fjAkD0Gf";
         
         const supabaseClient = (SUPABASE_URL && !SUPABASE_URL.includes("YOUR_SUPABASE")) 
-            ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) 
+            ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+            }) 
             : null;
 
         let GRID_SIZE = 150;
@@ -667,9 +669,7 @@
                     generateDeterministicData(currentLevel);
                 }
             } catch(err) {
-                alert("Image loading failed. Ensure URL supports cross-origin sharing (CORS).");
-                returnToGallery();
-                return;
+                generateDeterministicData(currentLevel);
             }
 
             await loadState();
@@ -681,75 +681,72 @@
             applySettingsUI();
         }
 
-        async function loadPhotoFromUrl(url) {
-            const response = await fetch(url, { mode: 'cors' });
-            if (!response.ok) throw new Error("Image fetch failed.");
-            
-            const blob = await response.blob();
-            const objectUrl = URL.createObjectURL(blob);
+        function loadPhotoFromUrl(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = () => {
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = GRID_SIZE;
+                        offCanvas.height = GRID_SIZE;
+                        const offCtx = offCanvas.getContext('2d');
+                        offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
 
-            const img = new Image();
-            img.src = objectUrl;
+                        const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
 
-            await new Promise((resolve, reject) => {
-                img.onload = resolve;
-                img.onerror = () => reject(new Error("Image decode failed."));
-            });
+                        colorPalette = ['#e0e0e0'];
+                        rgbPaletteParsed = [[224, 224, 224]];
+                        const colorMap = new Map();
 
-            const offCanvas = document.createElement('canvas');
-            offCanvas.width = GRID_SIZE;
-            offCanvas.height = GRID_SIZE;
-            const offCtx = offCanvas.getContext('2d');
-            offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
-            
-            URL.revokeObjectURL(objectUrl);
-
-            const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
-
-            colorPalette = ['#e0e0e0'];
-            rgbPaletteParsed = [[224, 224, 224]];
-            const colorMap = new Map();
-
-            for (let i = 0; i < imgData.length; i += 4) {
-                if (imgData[i + 3] < 128) continue;
-                const r = Math.round(imgData[i] / 16) * 16;
-                const g = Math.round(imgData[i + 1] / 16) * 16;
-                const b = Math.round(imgData[i + 2] / 16) * 16;
-                const key = `${r},${g},${b}`;
-                colorMap.set(key, (colorMap.get(key) || 0) + 1);
-            }
-
-            const sortedColors = Array.from(colorMap.entries())
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, TARGET_COLORS_COUNT);
-
-            sortedColors.forEach(([rgbStr]) => {
-                const [r, g, b] = rgbStr.split(',').map(Number);
-                colorPalette.push(`rgb(${r},${g},${b})`);
-                rgbPaletteParsed.push([r, g, b]);
-            });
-
-            userGrid.fill(0);
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    const pIdx = (y * GRID_SIZE + x) * 4;
-                    const r = imgData[pIdx];
-                    const g = imgData[pIdx + 1];
-                    const b = imgData[pIdx + 2];
-
-                    let closestIdx = 1;
-                    let minDist = Infinity;
-                    for (let i = 1; i < rgbPaletteParsed.length; i++) {
-                        const [pr, pg, pb] = rgbPaletteParsed[i];
-                        const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
-                        if (dist < minDist) {
-                            minDist = dist;
-                            closestIdx = i;
+                        for (let i = 0; i < imgData.length; i += 4) {
+                            if (imgData[i + 3] < 128) continue;
+                            const r = Math.round(imgData[i] / 16) * 16;
+                            const g = Math.round(imgData[i + 1] / 16) * 16;
+                            const b = Math.round(imgData[i + 2] / 16) * 16;
+                            const key = `${r},${g},${b}`;
+                            colorMap.set(key, (colorMap.get(key) || 0) + 1);
                         }
+
+                        const sortedColors = Array.from(colorMap.entries())
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, TARGET_COLORS_COUNT);
+
+                        sortedColors.forEach(([rgbStr]) => {
+                            const [r, g, b] = rgbStr.split(',').map(Number);
+                            colorPalette.push(`rgb(${r},${g},${b})`);
+                            rgbPaletteParsed.push([r, g, b]);
+                        });
+
+                        userGrid.fill(0);
+                        for (let y = 0; y < GRID_SIZE; y++) {
+                            for (let x = 0; x < GRID_SIZE; x++) {
+                                const pIdx = (y * GRID_SIZE + x) * 4;
+                                const r = imgData[pIdx];
+                                const g = imgData[pIdx + 1];
+                                const b = imgData[pIdx + 2];
+
+                                let closestIdx = 1;
+                                let minDist = Infinity;
+                                for (let i = 1; i < rgbPaletteParsed.length; i++) {
+                                    const [pr, pg, pb] = rgbPaletteParsed[i];
+                                    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+                                    if (dist < minDist) {
+                                        minDist = dist;
+                                        closestIdx = i;
+                                    }
+                                }
+                                answerGrid[y * GRID_SIZE + x] = closestIdx;
+                            }
+                        }
+                        resolve();
+                    } catch (e) {
+                        reject(e);
                     }
-                    answerGrid[y * GRID_SIZE + x] = closestIdx;
-                }
-            }
+                };
+                img.onerror = () => reject(new Error("Image execution failure or CORS restriction."));
+                img.src = url;
+            });
         }
 
         function loadCustomUrlFromInput() {
@@ -1242,34 +1239,25 @@
                 }
                 if (!imgUrl) return;
 
-                fetch(imgUrl, { mode: 'cors' })
-                    .then(res => {
-                        if (!res.ok) throw new Error();
-                        return res.blob();
-                    })
-                    .then(blob => {
-                        const objectUrl = URL.createObjectURL(blob);
-                        const img = new Image();
-                        img.src = objectUrl;
-                        img.onload = () => {
-                            const offCanvas = document.createElement('canvas');
-                            offCanvas.width = GRID_SIZE;
-                            offCanvas.height = GRID_SIZE;
-                            const offCtx = offCanvas.getContext('2d');
-                            offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
-                            URL.revokeObjectURL(objectUrl);
-                            const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = () => {
+                    const offCanvas = document.createElement('canvas');
+                    offCanvas.width = GRID_SIZE;
+                    offCanvas.height = GRID_SIZE;
+                    const offCtx = offCanvas.getContext('2d');
+                    offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                    const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
 
-                            coloredIndices.forEach(idx => {
-                                const x = idx % GRID_SIZE;
-                                const y = Math.floor(idx / GRID_SIZE);
-                                const pIdx = idx * 4;
-                                pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
-                                pCtx.fillRect(x, y, 1, 1);
-                            });
-                        };
-                    })
-                    .catch(() => {});
+                    coloredIndices.forEach(idx => {
+                        const x = idx % GRID_SIZE;
+                        const y = Math.floor(idx / GRID_SIZE);
+                        const pIdx = idx * 4;
+                        pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
+                        pCtx.fillRect(x, y, 1, 1);
+                    });
+                };
+                img.src = imgUrl;
             }
         }
 
