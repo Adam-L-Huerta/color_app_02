@@ -388,12 +388,10 @@
         }
 
         function toggleFullscreen() {
-            if (!document.fullscreenElement) {
+            if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
                 document.documentElement.requestFullscreen().catch(() => {});
-            } else {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                }
+            } else if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
             }
         }
 
@@ -653,7 +651,7 @@
                     }
                     
                     if (!url) {
-                        url = localStorage.getItem(`custom_url_${userId}__${currentLevel}`);
+                        url = localStorage.getItem(`custom_url_${userId}_${currentLevel}`);
                     }
                     
                     if (!url) {
@@ -684,13 +682,18 @@
         }
 
         async function loadPhotoFromUrl(url) {
+            const response = await fetch(url, { mode: 'cors' });
+            if (!response.ok) throw new Error("Image fetch failed.");
+            
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+
             const img = new Image();
-            img.crossOrigin = "Anonymous";
-            img.src = url;
+            img.src = objectUrl;
 
             await new Promise((resolve, reject) => {
                 img.onload = resolve;
-                img.onerror = () => reject(new Error("Failed to load image. CORS restriction active."));
+                img.onerror = () => reject(new Error("Image decode failed."));
             });
 
             const offCanvas = document.createElement('canvas');
@@ -698,6 +701,8 @@
             offCanvas.height = GRID_SIZE;
             const offCtx = offCanvas.getContext('2d');
             offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+            
+            URL.revokeObjectURL(objectUrl);
 
             const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
 
@@ -1058,7 +1063,11 @@
                 if (userGrid[i] !== 0) coloredIndices.push(i);
             }
             const key = getStorageKey(currentCategory, currentLevel);
-            localStorage.setItem(key, JSON.stringify(coloredIndices));
+            try {
+                localStorage.setItem(key, JSON.stringify(coloredIndices));
+            } catch(e) {
+                console.warn("Storage quota exceeded", e);
+            }
 
             if (currentUser && supabaseClient) {
                 clearTimeout(saveTimeout);
@@ -1087,7 +1096,9 @@
                 if (!error && data) {
                     coloredIndices = data.colored_indices || [];
                     if (data.custom_url) customImageUrl = data.custom_url;
-                    localStorage.setItem(key, JSON.stringify(coloredIndices));
+                    try {
+                        localStorage.setItem(key, JSON.stringify(coloredIndices));
+                    } catch(e){}
                 }
             }
 
@@ -1231,25 +1242,34 @@
                 }
                 if (!imgUrl) return;
 
-                const img = new Image();
-                img.crossOrigin = "Anonymous";
-                img.src = imgUrl;
-                img.onload = () => {
-                    const offCanvas = document.createElement('canvas');
-                    offCanvas.width = GRID_SIZE;
-                    offCanvas.height = GRID_SIZE;
-                    const offCtx = offCanvas.getContext('2d');
-                    offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
-                    const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+                fetch(imgUrl, { mode: 'cors' })
+                    .then(res => {
+                        if (!res.ok) throw new Error();
+                        return res.blob();
+                    })
+                    .then(blob => {
+                        const objectUrl = URL.createObjectURL(blob);
+                        const img = new Image();
+                        img.src = objectUrl;
+                        img.onload = () => {
+                            const offCanvas = document.createElement('canvas');
+                            offCanvas.width = GRID_SIZE;
+                            offCanvas.height = GRID_SIZE;
+                            const offCtx = offCanvas.getContext('2d');
+                            offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                            URL.revokeObjectURL(objectUrl);
+                            const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
 
-                    coloredIndices.forEach(idx => {
-                        const x = idx % GRID_SIZE;
-                        const y = Math.floor(idx / GRID_SIZE);
-                        const pIdx = idx * 4;
-                        pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
-                        pCtx.fillRect(x, y, 1, 1);
-                    });
-                };
+                            coloredIndices.forEach(idx => {
+                                const x = idx % GRID_SIZE;
+                                const y = Math.floor(idx / GRID_SIZE);
+                                const pIdx = idx * 4;
+                                pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
+                                pCtx.fillRect(x, y, 1, 1);
+                            });
+                        };
+                    })
+                    .catch(() => {});
             }
         }
 
@@ -1310,7 +1330,9 @@
                         const indices = row.colored_indices || [];
                         if (indices.length > 0) {
                             progressMap.set(row.level_index, { count: indices.length, indices, customUrl: row.custom_url });
-                            localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
+                            try {
+                                localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
+                            } catch(e){}
                         }
                     }
                 }
@@ -1340,7 +1362,6 @@
             hintMarker = null;
             customImageUrl = "";
             document.getElementById('game-screen').classList.remove('active');
-            document.getElementById('home-screen').classList.active;
             document.getElementById('home-screen').classList.add('active');
             await renderPortfolioGallery();
         }
