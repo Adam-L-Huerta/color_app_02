@@ -623,6 +623,45 @@
             btn.classList.toggle('active', isPanMode);
         }
 
+        async function fetchWikimediaImageUrl(levelIndex) {
+            const subject = document.getElementById('subject-select').value;
+            const categoryMap = {
+                general: 'Category:Featured_pictures_on_Wikimedia_Commons',
+                landscape: 'Category:Featured_landscapes',
+                animals: 'Category:Featured_animals',
+                architecture: 'Category:Featured_architecture',
+                abstract: 'Category:Abstract_art'
+            };
+
+            const catTitle = categoryMap[subject] || categoryMap.general;
+            const endpoint = 'https://commons.wikimedia.org/w/api.php';
+            const params = new URLSearchParams({
+                action: 'query',
+                generator: 'categorymembers',
+                gcmtitle: catTitle,
+                gcmtype: 'file',
+                gcmlimit: '50',
+                prop: 'imageinfo',
+                iiprop: 'url',
+                iiurlwidth: GRID_SIZE.toString(),
+                format: 'json',
+                origin: '*'
+            });
+
+            const response = await fetch(`${endpoint}?${params.toString()}`);
+            if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
+            
+            const data = await response.json();
+            if (!data.query || !data.query.pages) throw new Error('No Wikimedia media found');
+            
+            const pages = Object.values(data.query.pages);
+            const selectedPage = pages[levelIndex % pages.length];
+            const info = selectedPage.imageinfo && selectedPage.imageinfo[0];
+            
+            if (!info) throw new Error('Invalid Wikimedia image entry');
+            return info.thumburl || info.url;
+        }
+
         async function initLevel(levelIndex, overrideUrl = null) {
             isLevelLoaded = false;
             levelAlreadyCompleted = false;
@@ -636,9 +675,8 @@
 
             try {
                 if (currentCategory === 'photography') {
-                    const subject = document.getElementById('subject-select').value;
-                    const seedTag = subject === 'general' ? currentLevel : `${subject}-${currentLevel}`;
-                    await loadPhotoFromUrl(`https://picsum.photos/seed/${seedTag}/${GRID_SIZE}/${GRID_SIZE}`);
+                    const wikiUrl = await fetchWikimediaImageUrl(currentLevel);
+                    await loadPhotoFromUrl(wikiUrl);
                 } else if (currentCategory === 'custom') {
                     const userId = currentUser ? currentUser.id : 'guest';
                     let url = overrideUrl;
@@ -658,18 +696,17 @@
                     }
                     
                     if (!url) {
-                        alert(`No custom image URL provided for Level #${currentLevel + 1}`);
-                        returnToGallery();
-                        return;
+                        generateDeterministicData(currentLevel);
+                    } else {
+                        customImageUrl = url;
+                        localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
+                        await loadPhotoFromUrl(url);
                     }
-
-                    customImageUrl = url;
-                    localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
-                    await loadPhotoFromUrl(url);
                 } else {
                     generateDeterministicData(currentLevel);
                 }
             } catch(err) {
+                console.warn("Asset load failed. Falling back to procedural algorithm.", err);
                 generateDeterministicData(currentLevel);
             }
 
@@ -683,90 +720,86 @@
         }
 
         function loadPhotoFromUrl(url) {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 const img = new Image();
                 img.crossOrigin = "anonymous";
-                let attemptedFallback = false;
+                let fallbackAttempted = false;
 
                 const processImageData = () => {
+                    let imgData = null;
                     try {
                         const offCanvas = document.createElement('canvas');
                         offCanvas.width = GRID_SIZE;
                         offCanvas.height = GRID_SIZE;
                         const offCtx = offCanvas.getContext('2d');
                         offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
-
-                        const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
-
-                        colorPalette = ['#e0e0e0'];
-                        rgbPaletteParsed = [[224, 224, 224]];
-                        const colorMap = new Map();
-
-                        for (let i = 0; i < imgData.length; i += 4) {
-                            if (imgData[i + 3] < 128) continue;
-                            const r = Math.round(imgData[i] / 16) * 16;
-                            const g = Math.round(imgData[i + 1] / 16) * 16;
-                            const b = Math.round(imgData[i + 2] / 16) * 16;
-                            const key = `${r},${g},${b}`;
-                            colorMap.set(key, (colorMap.get(key) || 0) + 1);
-                        }
-
-                        const sortedColors = Array.from(colorMap.entries())
-                            .sort((a, b) => b[1] - a[1])
-                            .slice(0, TARGET_COLORS_COUNT);
-
-                        sortedColors.forEach(([rgbStr]) => {
-                            const [r, g, b] = rgbStr.split(',').map(Number);
-                            colorPalette.push(`rgb(${r},${g},${b})`);
-                            rgbPaletteParsed.push([r, g, b]);
-                        });
-
-                        userGrid.fill(0);
-                        for (let y = 0; y < GRID_SIZE; y++) {
-                            for (let x = 0; x < GRID_SIZE; x++) {
-                                const pIdx = (y * GRID_SIZE + x) * 4;
-                                const r = imgData[pIdx];
-                                const g = imgData[pIdx + 1];
-                                const b = imgData[pIdx + 2];
-
-                                let closestIdx = 1;
-                                let minDist = Infinity;
-                                for (let i = 1; i < rgbPaletteParsed.length; i++) {
-                                    const [pr, pg, pb] = rgbPaletteParsed[i];
-                                    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
-                                    if (dist < minDist) {
-                                        minDist = dist;
-                                        closestIdx = i;
-                                    }
-                                }
-                                answerGrid[y * GRID_SIZE + x] = closestIdx;
-                            }
-                        }
-                        resolve();
+                        imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
                     } catch (e) {
-                        if (!attemptedFallback) {
-                            attemptedFallback = true;
-                            loadFallbackSVG();
-                        } else {
-                            reject(e);
+                        console.warn("Canvas cross-origin taint detected. Using offline generator.", e);
+                        handleError();
+                        return;
+                    }
+
+                    colorPalette = ['#e0e0e0'];
+                    rgbPaletteParsed = [[224, 224, 224]];
+                    const colorMap = new Map();
+
+                    for (let i = 0; i < imgData.length; i += 4) {
+                        if (imgData[i + 3] < 128) continue;
+                        const r = Math.round(imgData[i] / 16) * 16;
+                        const g = Math.round(imgData[i + 1] / 16) * 16;
+                        const b = Math.round(imgData[i + 2] / 16) * 16;
+                        const key = `${r},${g},${b}`;
+                        colorMap.set(key, (colorMap.get(key) || 0) + 1);
+                    }
+
+                    const sortedColors = Array.from(colorMap.entries())
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, TARGET_COLORS_COUNT);
+
+                    sortedColors.forEach(([rgbStr]) => {
+                        const [r, g, b] = rgbStr.split(',').map(Number);
+                        colorPalette.push(`rgb(${r},${g},${b})`);
+                        rgbPaletteParsed.push([r, g, b]);
+                    });
+
+                    userGrid.fill(0);
+                    for (let y = 0; y < GRID_SIZE; y++) {
+                        for (let x = 0; x < GRID_SIZE; x++) {
+                            const pIdx = (y * GRID_SIZE + x) * 4;
+                            const r = imgData[pIdx];
+                            const g = imgData[pIdx + 1];
+                            const b = imgData[pIdx + 2];
+
+                            let closestIdx = 1;
+                            let minDist = Infinity;
+                            for (let i = 1; i < rgbPaletteParsed.length; i++) {
+                                const [pr, pg, pb] = rgbPaletteParsed[i];
+                                const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+                                if (dist < minDist) {
+                                    minDist = dist;
+                                    closestIdx = i;
+                                }
+                            }
+                            answerGrid[y * GRID_SIZE + x] = closestIdx;
                         }
                     }
+                    resolve();
                 };
 
-                const loadFallbackSVG = () => {
-                    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/><circle cx="${GRID_SIZE/2}" cy="${GRID_SIZE/2}" r="${GRID_SIZE/3}" fill="%2300adb5"/></svg>`;
-                    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                const handleError = () => {
+                    if (!fallbackAttempted) {
+                        fallbackAttempted = true;
+                        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/><text x="50%" y="50%" fill="%23ffffff" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12">Image Unavailable</text></svg>`;
+                        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                    } else {
+                        generateDeterministicData(currentLevel);
+                        resolve();
+                    }
                 };
 
                 img.onload = processImageData;
-                img.onerror = () => {
-                    if (!attemptedFallback) {
-                        attemptedFallback = true;
-                        loadFallbackSVG();
-                    } else {
-                        reject(new Error("Image execution failure or CORS restriction."));
-                    }
-                };
+                img.onerror = handleError;
                 img.src = url;
             });
         }
@@ -1217,7 +1250,7 @@
             }
         }
 
-        function drawPreviewProgress(canvasEl, levelIdx, category, coloredIndices, customUrl = null) {
+        async function drawPreviewProgress(canvasEl, levelIdx, category, coloredIndices, customUrl = null) {
             const pCtx = canvasEl.getContext('2d');
             pCtx.clearRect(0, 0, GRID_SIZE, GRID_SIZE);
             pCtx.fillStyle = '#d8d8d8';
@@ -1255,9 +1288,11 @@
             } else {
                 let imgUrl = customUrl;
                 if (category === 'photography') {
-                    const subject = document.getElementById('subject-select').value;
-                    const seedTag = subject === 'general' ? levelIdx : `${subject}-${levelIdx}`;
-                    imgUrl = `https://picsum.photos/seed/${seedTag}/${GRID_SIZE}/${GRID_SIZE}`;
+                    try {
+                        imgUrl = await fetchWikimediaImageUrl(levelIdx);
+                    } catch(e) {
+                        imgUrl = null;
+                    }
                 }
                 if (!imgUrl) return;
 
